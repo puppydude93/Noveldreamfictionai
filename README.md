@@ -1,49 +1,19 @@
-# NovelDreamFiction AI — Vertex AI Chat
+# 🎈 Blank app template
 
-A Node.js chat interface powered by Google Vertex AI (Gemini), with streaming support and a structured system prompt.
+A simple Streamlit app template for you to modify!
 
-## Prerequisites
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
 
-- Node.js >= 18
-- A Google Cloud project with the Vertex AI API enabled
-- Authentication: `gcloud auth application-default login` or a service account key
+### How to run it on your own machine
 
-## Setup
-
-1. Install dependencies
+1. Install the requirements
 
    ```
-   npm install
+   $ pip install -r requirements.txt
    ```
 
-2. Configure environment variables (copy and edit the example)
+2. Run the app
 
    ```
-   cp .env.example .env
+   $ streamlit run streamlit_app.py
    ```
-
-   | Variable | Required | Default | Description |
-   |---|---|---|---|
-   | `GOOGLE_CLOUD_PROJECT` | Yes | — | Your GCP project ID |
-   | `GOOGLE_CLOUD_LOCATION` | No | `us-central1` | Vertex AI region |
-   | `VERTEX_MODEL` | No | `gemini-1.5-pro` | Gemini model name |
-
-## Usage
-
-Run with the default prompt:
-
-```
-npm start
-```
-
-Pass a custom prompt as arguments:
-
-```
-node app.js "Explain the three-act story structure"
-```
-
-## How it works
-
-- Sends the prompt to Gemini via the Vertex AI SDK using streaming (`generateContentStream`).
-- Falls back to non-streaming (`generateContent`) if streaming is unavailable.
-- Accepts optional chat history as a second argument to `chatOnce()` for multi-turn use.
