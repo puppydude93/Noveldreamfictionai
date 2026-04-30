@@ -1,0 +1,17 @@
+{
+  "name": "noveldreamfictionai-vertex",
+  "version": "1.0.0",
+  "description": "Vertex AI Gemini chat interface for NovelDreamFiction AI",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "chat": "node app.js"
+  },
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
