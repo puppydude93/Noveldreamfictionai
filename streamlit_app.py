@@ -1,92 +1,181 @@
 import streamlit as st
 import google.generativeai as genai
+from datetime import datetime
 
-# Claude's writing style encoded as a system instruction for Gemini
-CLAUDE_STYLE_SYSTEM_PROMPT = """You are a helpful AI assistant. Respond with the following style and principles, which mirror Claude's distinctive voice:
+# ── System prompts per writing mode ──────────────────────────────────────────
 
-TONE AND DIRECTNESS:
-- Be direct and get to the point immediately. Don't bury the answer.
-- Never open with hollow affirmations like "Great question!", "Certainly!", "Of course!", or "Absolutely!"
-- Don't end with filler like "I hope this helps!" or "Let me know if you need anything else!"
-- Be genuinely helpful, not performatively enthusiastic.
+_SHARED_STYLE = """
+Respond in Claude's style:
+- Direct, clear prose. No hollow openers ("Great question!", "Certainly!").
+- No filler closers ("Hope this helps!", "Let me know if you need anything!").
+- Match length to the complexity of the request.
+- Use markdown only when it genuinely aids readability.
+- No emojis unless the user introduces them.
+- Acknowledge uncertainty honestly.
+"""
 
-RESPONSE LENGTH:
-- Match length to complexity. A simple question deserves a short answer. A complex request deserves a thorough one.
-- Don't pad responses with unnecessary context or restatements of the question.
-- Don't truncate when completeness is needed.
+SYSTEM_PROMPTS = {
+    "Story Generation": f"""You are a creative fiction writing partner helping authors generate compelling stories.
 
-FORMATTING:
-- Use markdown (headers, bullets, code blocks) only when it genuinely improves readability.
-- Don't use headers for short responses — prose flows better.
-- Always use fenced code blocks with a language tag for any code.
-- Don't over-bold. Bold only the most critical terms, not entire sentences.
-- No emojis unless the user uses them first.
+When generating story content:
+- Produce vivid, immersive prose that serves the story's tone and genre.
+- Develop distinct character voices — dialogue should reveal personality, not just move plot.
+- Use sensory detail purposefully, not decoratively.
+- Vary sentence rhythm. Short sentences create tension; longer ones build atmosphere.
+- Show emotional states through action and behavior, not exposition.
+- Avoid clichés. When a familiar phrase comes to mind, push past it.
+- Ask clarifying questions before generating a long piece if the request is ambiguous — genre, POV, and tone matter.
 
-HONESTY AND UNCERTAINTY:
-- Acknowledge uncertainty clearly ("I think...", "I'm not certain, but...", "You may want to verify this...").
-- Never fabricate facts, statistics, or citations.
-- If you don't know something, say so directly.
+{_SHARED_STYLE}""",
 
-CODE:
-- Write working, practical code.
-- Add comments only when the reason behind something is non-obvious — not to explain what each line does.
-- Prefer clarity over cleverness.
+    "Character Development": f"""You are a character development consultant helping fiction writers build deep, believable characters.
 
-INTELLECTUAL STYLE:
-- Be precise. Prefer specific language over vague generalities.
-- When multiple reasonable approaches exist, briefly note the tradeoffs rather than arbitrarily picking one.
-- Trust the user's intelligence. Don't over-explain basics unless asked.
-- Engage with the actual substance of what's being asked.
+When developing characters:
+- Ground characters in specific, concrete details (habits, contradictions, wants vs. needs).
+- A character's flaw should be the shadow side of their strength.
+- Backstory matters only insofar as it explains present behavior — don't over-document it.
+- Distinguish between what a character wants consciously and what they need thematically.
+- Suggest how a character might evolve across the story arc.
+- When asked for a character profile, structure it: core trait → contradiction → want → need → wound → voice.
 
-You are an AI assistant helping with a wide range of tasks including writing, coding, analysis, research, and conversation. Respond naturally following the above principles."""
+{_SHARED_STYLE}""",
+
+    "Plot & Structure": f"""You are a story structure consultant helping authors build coherent, compelling plots.
+
+When working on plot and structure:
+- Diagnose structural problems clearly: identify what's actually broken (pacing, motivation, stakes, causality).
+- Reference established structures (three-act, hero's journey, Save the Cat) as tools, not prescriptions.
+- Every scene should do at least two things: advance plot AND reveal character or theme.
+- Subplots should mirror, complicate, or contrast the main throughline — not just add length.
+- Escalation isn't just raising stakes — it's forcing harder choices.
+- For outlines, be specific about what changes at each beat, not just what happens.
+
+{_SHARED_STYLE}""",
+
+    "Writing Assistant": f"""You are a versatile writing assistant helping with any aspect of fiction writing.
+
+You help with: prose editing, pacing, dialogue polish, scene rewrites, genre conventions, world-building,
+query letters, synopses, titles, chapter openings, and anything else a novelist needs.
+
+When editing prose:
+- Identify the core issue first, then suggest a fix — don't just rewrite without explaining why.
+- Preserve the author's voice; adjust, don't replace.
+- Be specific: "this sentence is passive and buries the action" beats "consider revising."
+
+{_SHARED_STYLE}""",
+}
+
+STARTER_PROMPTS = {
+    "Story Generation": [
+        "Write the opening scene of a gothic mystery set in 1920s Edinburgh",
+        "Generate a short story about a lighthouse keeper who discovers their light has been saving something other than ships",
+        "Write a tense confrontation scene between two estranged siblings settling an estate",
+    ],
+    "Character Development": [
+        "Help me build a morally grey antagonist who genuinely believes they're the hero",
+        "Create a character profile for a disillusioned war veteran turned small-town librarian",
+        "What's a compelling internal contradiction for a con artist who can't stop telling the truth?",
+    ],
+    "Plot & Structure": [
+        "My protagonist's motivation disappears halfway through act two — how do I fix this?",
+        "Outline a three-act structure for a heist story where the real prize isn't the money",
+        "How do I weave a romance subplot into a thriller without slowing the pace?",
+    ],
+    "Writing Assistant": [
+        "Edit this paragraph for pace and clarity: [paste your text]",
+        "How do I write a query letter for a literary thriller?",
+        "What are the conventions of cozy mystery I need to know before writing one?",
+    ],
+}
 
 
-def get_gemini_model():
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def build_gemini_history(messages: list[dict]) -> list[dict]:
+    history = []
+    for msg in messages[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        history.append({"role": role, "parts": [msg["content"]]})
+    return history
+
+
+def get_model(model_name: str, mode: str, temperature: float):
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
         st.error(
-            "Gemini API key not found. Add `GEMINI_API_KEY` to your Streamlit secrets "
-            "(.streamlit/secrets.toml) to get started."
+            "**API key missing.** Add `GEMINI_API_KEY` to `.streamlit/secrets.toml` to use the app.\n\n"
+            "Get a free key at [aistudio.google.com](https://aistudio.google.com/app/apikey)."
         )
         st.stop()
     genai.configure(api_key=api_key)
     return genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=CLAUDE_STYLE_SYSTEM_PROMPT,
+        model_name=model_name,
+        system_instruction=SYSTEM_PROMPTS[mode],
         generation_config=genai.GenerationConfig(
-            temperature=0.7,
+            temperature=temperature,
             top_p=0.95,
             max_output_tokens=8192,
         ),
     )
 
 
-def build_gemini_history(messages: list[dict]) -> list[dict]:
-    """Convert Streamlit message history to Gemini's expected format."""
-    history = []
-    for msg in messages[:-1]:  # exclude the latest user message
-        role = "user" if msg["role"] == "user" else "model"
-        history.append({"role": role, "parts": [msg["content"]]})
-    return history
+def export_conversation(messages: list[dict], mode: str) -> str:
+    lines = [f"# NovelDream AI — {mode}", f"Exported {datetime.now().strftime('%Y-%m-%d %H:%M')}", ""]
+    for msg in messages:
+        role = "You" if msg["role"] == "user" else "NovelDream"
+        lines.append(f"**{role}:** {msg['content']}")
+        lines.append("")
+    return "\n".join(lines)
 
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── Page setup ────────────────────────────────────────────────────────────────
+
 st.set_page_config(
     page_title="NovelDream AI",
     page_icon="✦",
     layout="centered",
 )
 
+st.markdown(
+    """
+    <style>
+    .stChatMessage [data-testid="stMarkdownContainer"] p { line-height: 1.7; }
+    .mode-badge { font-size: 0.75rem; color: #888; margin-top: -0.5rem; margin-bottom: 1rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("NovelDream AI")
-st.caption("Powered by Google Gemini · Claude-style responses")
 
 # ── Session state ─────────────────────────────────────────────────────────────
+
+if "mode" not in st.session_state:
+    st.session_state.mode = "Story Generation"
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "prev_mode" not in st.session_state:
+    st.session_state.prev_mode = st.session_state.mode
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+
 with st.sidebar:
-    st.header("Settings")
+    st.header("NovelDream AI")
+    st.caption("Powered by Google Gemini")
+    st.divider()
+
+    mode = st.radio(
+        "Writing mode",
+        list(SYSTEM_PROMPTS.keys()),
+        index=list(SYSTEM_PROMPTS.keys()).index(st.session_state.mode),
+    )
+
+    if mode != st.session_state.prev_mode:
+        st.session_state.messages = []
+        st.session_state.prev_mode = mode
+    st.session_state.mode = mode
+
+    st.divider()
 
     model_choice = st.selectbox(
         "Model",
@@ -94,58 +183,76 @@ with st.sidebar:
         index=0,
     )
 
-    temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
+    temperature = st.slider(
+        "Creativity",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.85,
+        step=0.05,
+        help="Higher = more inventive; lower = more consistent",
+    )
 
-    if st.button("Clear conversation", use_container_width=True):
+    st.divider()
+
+    if st.button("New conversation", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
+    if st.session_state.messages:
+        export_text = export_conversation(st.session_state.messages, mode)
+        st.download_button(
+            "Export conversation",
+            data=export_text,
+            file_name=f"noveldream-{mode.lower().replace(' ', '-')}-{datetime.now().strftime('%Y%m%d')}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
     st.divider()
-    st.markdown(
-        "**Claude-style** means responses that are direct, appropriately sized, "
-        "honest about uncertainty, and formatted only when it genuinely helps."
+    st.caption(
+        {
+            "Story Generation": "Generates scenes, openings, and full stories with vivid prose.",
+            "Character Development": "Builds deep, contradictory, believable characters.",
+            "Plot & Structure": "Diagnoses structural problems and builds tight outlines.",
+            "Writing Assistant": "Edits prose, polish dialogue, and answers craft questions.",
+        }[mode]
     )
 
-# ── Chat history display ──────────────────────────────────────────────────────
+# ── Main area ─────────────────────────────────────────────────────────────────
+
+st.markdown(f'<p class="mode-badge">Mode: {mode}</p>', unsafe_allow_html=True)
+
+# Starter prompts when conversation is empty
+if not st.session_state.messages:
+    st.markdown("**Try one of these to get started:**")
+    cols = st.columns(1)
+    for starter in STARTER_PROMPTS[mode]:
+        if st.button(starter, use_container_width=True, key=f"starter_{starter[:20]}"):
+            st.session_state.messages.append({"role": "user", "content": starter})
+            st.rerun()
+    st.divider()
+
+# Chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ── User input ────────────────────────────────────────────────────────────────
-if prompt := st.chat_input("Ask anything..."):
+# Input
+if prompt := st.chat_input(f"{mode} — ask anything..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner(""):
+        with st.spinner("Writing..."):
             try:
-                api_key = st.secrets.get("GEMINI_API_KEY", "")
-                if not api_key:
-                    st.error(
-                        "Gemini API key not found. Add `GEMINI_API_KEY` to your Streamlit "
-                        "secrets (.streamlit/secrets.toml) to get started."
-                    )
-                    st.stop()
-
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel(
-                    model_name=model_choice,
-                    system_instruction=CLAUDE_STYLE_SYSTEM_PROMPT,
-                    generation_config=genai.GenerationConfig(
-                        temperature=temperature,
-                        top_p=0.95,
-                        max_output_tokens=8192,
-                    ),
-                )
-
+                model = get_model(model_choice, mode, temperature)
                 history = build_gemini_history(st.session_state.messages)
                 chat = model.start_chat(history=history)
                 response = chat.send_message(prompt)
                 reply = response.text
-
             except Exception as e:
-                reply = f"Error communicating with Gemini: {e}"
+                reply = f"Error: {e}"
 
         st.markdown(reply)
 
